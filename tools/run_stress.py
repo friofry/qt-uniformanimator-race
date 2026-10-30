@@ -23,10 +23,11 @@ if args.software:
     env["QT_OPENGL"] = "software"       # Windows: opengl32sw.dll
     env["LIBGL_ALWAYS_SOFTWARE"] = "1"  # Linux: llvmpipe
 
+binary = os.path.abspath(args.binary)
 crashes = 0
 for run in range(1, args.runs + 1):
     start = time.time()
-    code = subprocess.run([args.binary, "--mode", args.mode, "--seconds", str(args.seconds)],
+    code = subprocess.run([binary, "--mode", args.mode, "--seconds", str(args.seconds)],
                           env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
     crashed = code != 0
     crashes += crashed
