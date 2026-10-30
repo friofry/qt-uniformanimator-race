@@ -6,11 +6,12 @@ from the window.
 
 ## Environment
 
-- Qt 6.11.2, MSVC 2022, Windows 11, threaded render loop
-- Reproduces with hardware rendering (D3D11, AMD) and with software rendering
+- Windows 11, Qt 6.11.2, MSVC 2022: D3D11 on an AMD GPU, and software rendering
   (`opengl32sw`, WARP)
+- macOS 26, Apple M4 Max, Qt 6.11.0: Metal
+- Threaded render loop in all cases
 - The relevant code is the same in v6.11.0, v6.11.2, the 6.11 branch and dev
-- Not tried on Linux or macOS
+- Not tried on Linux
 
 ## Build and run
 
@@ -34,11 +35,18 @@ python tools/run_stress.py build/Release/uniformanimator_race.exe --mode uniform
 | `xanimator` | `XAnimator` on the same item, render thread | control, does not crash |
 
 `--software` selects the OpenGL backend with a CPU rasterizer, which hits the race
-within seconds. Without it the crash still happens, usually later.
+within seconds on Windows. Without it the crash still happens, usually later.
+
+Do not use `--software` on macOS. AppKit aborts OpenGL on the render thread with
+`-[NSOpenGLContext setView:] must be called from the main thread`, before any
+animation starts. That is a different failure, unrelated to this race.
+
+`run_stress.py` counts any non-zero exit as a crash, so check the stack when trying
+a new platform.
 
 ## Results
 
-Each run lasted up to 40 s:
+Windows, runs of up to 40 s:
 
 | Configuration | Crashed |
 |---|---|
@@ -47,9 +55,17 @@ Each run lasted up to 40 s:
 | `xanimator`, software OpenGL | 0 of 3 |
 | `uniform`, D3D11 on GPU, other load on the CPU | 2 of 3 |
 
-The GPU run shared the machine with another CPU-heavy process, so its rate is not
-representative. On an idle machine the GPU case can take much longer, or not show
-up at all in a short run.
+The Windows GPU run shared the machine with another CPU-heavy process, so its rate
+is not representative. On an idle machine that case can take much longer, or not
+show up at all in a short run.
+
+macOS, runs of up to 20 s:
+
+| Configuration | Crashed |
+|---|---|
+| `uniform`, Metal | 6 of 6, `SIGSEGV` within 1.9 to 5.1 s |
+| `number`, Metal | 0 of 3 |
+| `xanimator`, Metal | 0 of 3 |
 
 ## Stack
 
@@ -74,6 +90,20 @@ Qt6Quick!QQuickLoader::setActive
 
 Symbols come from export tables, so frames are approximate. The offset matches the
 source analysis below.
+
+macOS, with exact symbols from `.dSYM`: `KERN_INVALID_ADDRESS at 0x8` on
+`QSGRenderThread`:
+
+```text
+QQuickWindowPrivate::get(QQuickWindow*)
+QQuickShaderEffectPrivate::updateUniformValue(...)+268
+QQuickUniformAnimatorJob::updateCurrentTime(int)+220
+QAbstractAnimationJob::setCurrentTime(int)+524
+QQmlAnimationTimer::updateAnimationsTime(long long)+132
+```
+
+In the analyzed report the main thread was in `~QQuickShaderEffect`, which is a
+later point of the same item teardown.
 
 ## Cause
 
@@ -109,6 +139,11 @@ window can be cleared right after the check.
 
 Transform and opacity animators are not affected: their jobs write only to state
 owned by the render thread (`m_helper`, `m_opacityNode`), refreshed during sync.
+
+## Related
+
+[QTBUG-151922](https://qt-project.atlassian.net/browse/QTBUG-151922) is the report
+for this repository. See also QTBUG-124152, QTBUG-119363 and QTBUG-89674.
 
 ## Possible fix
 
